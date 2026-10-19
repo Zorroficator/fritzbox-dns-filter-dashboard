@@ -1,0 +1,25 @@
+# OS / editor
+.DS_Store
+
+# Secrets
+*.key
+*.pem
+*_pass
+.env
+
+# Generated data (written by export.py); the demo sample data is generated in CI
+data/*.json
+data/*.db*
+!demo/**
+
+# Local collector configuration
+collector/config.toml
+
+# Logs
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/

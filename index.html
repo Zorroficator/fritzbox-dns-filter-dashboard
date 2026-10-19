@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light" data-lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>FTrap · DNS Filter</title>
+  <script src="theme-init.js"></script>
+  <link rel="stylesheet" href="fonts.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header class="app-head">
+    <div class="app-head-title">
+      <h1 data-i18n="title">FTrap</h1>
+      <p class="head-sub" data-i18n="subtitle">DNS filter of the FRITZ!Box</p>
+      <p class="head-source">FRITZ!Box DNS filter</p>
+    </div>
+    <div class="toolbar">
+      <div class="seg-group" role="group" aria-label="Language">
+        <button class="toggle-btn" id="btn-lang-de" aria-pressed="true">DE</button>
+        <button class="toggle-btn" id="btn-lang-en" aria-pressed="false">EN</button>
+      </div>
+      <button class="toggle-btn btn-plain" id="btn-theme" type="button">Dark</button>
+      <div class="head-status">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-text" data-i18n="connecting">connecting …</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="dash-main">
+
+    <div class="demo-note hidden-sec" id="demo-note" data-i18n="demo_note">Demo – synthetic data</div>
+
+    <section class="banner-list" id="banners" aria-live="polite"></section>
+
+    <section class="card" id="sec-tiles">
+      <h2 data-i18n="sec_overview">Overview</h2>
+      <div class="metric-grid" id="tiles"></div>
+      <p class="card-note after" data-i18n="pct_note">Share with one decimal; the FRITZ!Box UI rounds up to whole percent.</p>
+    </section>
+
+    <section class="card" id="sec-chart">
+      <h2 data-i18n="sec_history">History</h2>
+      <div class="chart-block">
+        <div class="chart-head">
+          <div class="chart-title" id="chart-title">–</div>
+          <div class="seg-group" role="group" aria-label="Time span">
+            <button class="toggle-btn" data-span="day"   data-i18n="span_day">24 h</button>
+            <button class="toggle-btn" data-span="week"  data-i18n="span_week">7 days</button>
+            <button class="toggle-btn" data-span="month" data-i18n="span_month">30 days</button>
+          </div>
+        </div>
+        <div class="card-note chart-note" id="chart-note"></div>
+        <svg class="chart" id="chart-ftrap" role="img" aria-label="Allowed and blocked requests"></svg>
+        <div class="legend">
+          <span><i class="sw-allowed"></i><span data-i18n="legend_allowed">allowed</span></span>
+          <span><i class="sw-blocked"></i><span data-i18n="legend_blocked">blocked</span></span>
+          <span><i class="sw-pct"></i><span data-i18n="legend_pct">Share blocked (%)</span></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="sec-lists">
+      <h2 data-i18n="sec_lists">Filter lists</h2>
+      <div class="table-wrap"><table class="grid" id="lists-table"></table></div>
+    </section>
+
+    <section class="card hidden-sec" id="sec-autoupdate">
+      <h2 data-i18n="sec_autoupdate">Automatic update</h2>
+      <div class="metric-grid cols-4" id="autoupdate-grid"></div>
+      <p class="card-note after" data-i18n="au_note">Display only: the filter lists are updated by the FRITZ!Box itself.</p>
+    </section>
+
+    <section class="card" id="sec-exceptions">
+      <h2 data-i18n="sec_exceptions">Exceptions</h2>
+      <div class="metric-grid cols-3" id="exceptions-grid"></div>
+      <p class="card-note after" data-i18n="exceptions_note">Only the count is collected, not the contents. The box provides no top domains or top clients.</p>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <span data-i18n="footer">FTrap</span>
+    <span class="sep">·</span>
+    <span id="updated-at">–</span>
+    <span class="sep">·</span>
+    <span data-i18n="footer_info">No top domains/clients: not provided by the box.</span>
+    <span class="sep">·</span>
+    <span data-i18n="footer_beta">FRITZ!OS beta API (tested: 8.40 Labor, build 136730) – may change with any update</span>
+  </footer>
+
+  <div id="tooltip" class="hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

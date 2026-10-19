@@ -1,0 +1,33 @@
+# Example configuration for ftrap_collector.py
+
+# Base URL of the FRITZ!Box web interface.
+box_url = "http://fritz.box"
+
+# File with the user name on line 1 and the password on line 2, or lines
+# "username: ..." / "password: ..." ("login:" and "user:" also work).
+# Keep it private: chmod 600 (the collector refuses a file readable by others). Alternatively set FTRAP_USER / FTRAP_PASSWORD
+# in the environment (they take precedence over the file).
+credentials_file = "~/.config/ftrap/credentials"
+
+# SQLite database written by the collector (read by the dashboard export).
+# "~" is expanded; relative paths are resolved relative to the repository root.
+# Default (when unset): $XDG_DATA_HOME/ftrap/ftrap.db, else
+# ~/.local/share/ftrap/ftrap.db - outside the folder that may be served by a
+# web server. The environment variable FTRAP_DB overrides this value.
+# db_path = "~/.local/share/ftrap/ftrap.db"
+
+# Optional: PEM certificate to trust when box_url is https:// (e.g. the box's
+# own certificate). Certificate verification can never be switched off.
+# ca_file = "~/.config/ftrap/fritzbox.pem"
+
+# Seconds between two collection runs.
+interval_seconds = 180
+
+# HTTP timeout per request in seconds.
+timeout_seconds = 10
+
+# Endpoint paths below /api/v0/, tried in order; the first success wins.
+paths = ["beta/dnsfilter", "generic/dnsfilter"]
+
+# Rows older than this are deleted from dnsfilter_stats and poller_health.
+retention_days = 730
