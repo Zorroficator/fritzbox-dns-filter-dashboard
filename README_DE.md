@@ -2,14 +2,16 @@
 
 # FTrap – FRITZ!Box-DNS-Filter-Dashboard
 
-🇩🇪 Deutsch &nbsp;|&nbsp; 🇬🇧 [English](README_EN.md)
+🇬🇧 [English](README.md) &nbsp;|&nbsp; 🇩🇪 Deutsch
+
+[![Tests](https://github.com/Zorroficator/fritzbox-dns-filter-dashboard/actions/workflows/tests.yml/badge.svg)](https://github.com/Zorroficator/fritzbox-dns-filter-dashboard/actions/workflows/tests.yml)
 
 Pi-hole-artige Statistik für den eingebauten DNS-Filter von FRITZ!OS 8.4x/8.50: ein kleiner Sammler, eine SQLite-Datenbank und ein statisches Web-Dashboard. Alle Abfragen an die Box sind rein lesend.
 
 > [!WARNING]
 > **Beta-Schnittstelle.** Den DNS-Filter gibt es ab FRITZ!OS 8.50 (final seit 29.09.2026, zunächst für 7690/5690/5630, weitere Modelle folgen) sowie in Labor-Versionen von 8.4x. Entwickelt wurde mit FRITZ!OS 8.40 Labor (Build 136730), getestet ist mit **FRITZ!OS 8.50 (Build 136731)**; dort funktioniert derselbe Pfad (`/api/v0/beta/dnsfilter`). Die Schnittstelle bleibt undokumentierte Beta und kann sich mit jedem Firmware-Update ändern oder wegfallen. Das Projekt ist daher experimentell – mit Vorsicht zu genießen.
 
-**🔴 [Live-Demo-Dashboard](https://zorroficator.github.io/fritzbox-dns-filter-dashboard/)** – statische Seite mit synthetischen Daten.
+**🔴 [Live-Demo-Dashboard](https://zorroficator.github.io/fritzbox-dns-filter-dashboard/)** – statische Seite mit synthetischen Daten, kein Backend nötig.
 
 > Nicht mit AVM verbunden. FRITZ! ist eine Marke des jeweiligen Inhabers (AVM / FRITZ! GmbH); der Name dient hier nur der Beschreibung der Kompatibilität.
 
