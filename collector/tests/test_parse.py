@@ -1,9 +1,11 @@
+import io
 import json
 import sqlite3
 import sys
 import tempfile
 import time
 import unittest
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -128,7 +130,8 @@ class DbTests(unittest.TestCase):
     def test_schema_columns(self):
         cols = [r[1] for r in self.q("PRAGMA table_info(dnsfilter_stats)")]
         self.assertEqual(cols[:3], ["ts", "enabled", "blocked"])
-        self.assertEqual(cols[-4:], ["source_path", "top_keys", "n_domains_allow", "n_domains_deny"])
+        self.assertEqual(cols[-4:], ["n_domains_allow", "n_domains_deny",
+                                    "n_domains_disabled", "stats_keys"])
         self.assertEqual(len(self.q("PRAGMA table_info(dnsfilter_lists)").fetchall()), 14)
         self.assertEqual(len(self.q("PRAGMA table_info(poller_health)").fetchall()), 6)
 
@@ -163,7 +166,8 @@ class DbTests(unittest.TestCase):
         self.q("INSERT INTO poller_health VALUES (?,?,?,?,?,?)", (old, "DNSF", 1, 1, 0, ""))
         self.q("INSERT INTO poller_health VALUES (?,?,?,?,?,?)", (now, "DNSF", 1, 1, 0, ""))
         res = self.db.run_retention(730, now)
-        self.assertEqual(res, {"poller_health": 1, "dnsfilter_stats": 1})
+        self.assertEqual(res, {"poller_health": 1, "dnsfilter_stats": 1,
+                               "dnsfilter_list_updates": 0})
         self.assertEqual(self.q("SELECT COUNT(*) FROM dnsfilter_stats").fetchone()[0], 1)
         # lists are never pruned
         self.assertEqual(self.q("SELECT COUNT(*) FROM dnsfilter_lists").fetchone()[0], 2)
@@ -288,6 +292,9 @@ class ActionCountTests(unittest.TestCase):
         r = fc.parse_dnsfilter({"domains": domains}, "p")
         return r["n_domains"], r["n_domains_allow"], r["n_domains_deny"]
 
+    def _disabled(self, domains):
+        return fc.parse_dnsfilter({"domains": domains}, "p")["n_domains_disabled"]
+
     def test_allow_deny(self):
         doms = [{"domain": "a.invalid", "action": "allow", "enabled": True},
                 {"domain": "b.invalid", "action": "deny", "enabled": True},
@@ -310,12 +317,230 @@ class ActionCountTests(unittest.TestCase):
     def test_not_a_list(self):
         for bad in ({"a": {"action": "allow"}}, "allow", 3, None):
             self.assertEqual(self._count(bad)[1:], (None, None))
+            self.assertIsNone(self._disabled(bad))
         r = fc.parse_dnsfilter({}, "p")
-        self.assertEqual((r["n_domains"], r["n_domains_allow"], r["n_domains_deny"]), (None,) * 3)
+        self.assertEqual((r["n_domains"], r["n_domains_allow"], r["n_domains_deny"],
+                          r["n_domains_disabled"]), (None,) * 4)
+
+    def test_disabled_values(self):
+        doms = [{"action": "allow", "enabled": False}, {"action": "deny", "enabled": 0},
+                {"enabled": "0"}, {"enabled": "false"}, {"enabled": " FALSE "},
+                {"action": "allow", "enabled": True}, {"enabled": 1}, {"enabled": "1"},
+                {"enabled": "true"}]
+        # disabled entries are still counted in allow/deny
+        self.assertEqual(self._count(doms), (9, 2, 1))
+        self.assertEqual(self._disabled(doms), 5)
+
+    def test_missing_or_null_enabled_is_not_disabled(self):
+        self.assertEqual(self._disabled([{"action": "allow"}, {"enabled": None}, "x", None]), 0)
 
     def test_no_domain_content_in_result(self):
         r = fc.parse_dnsfilter({"domains": [{"domain": "secret.invalid", "action": "allow"}]}, "p")
         self.assertNotIn("secret.invalid", repr(r))
+
+
+class StatsKeysTests(unittest.TestCase):
+    def keys(self, stats):
+        return fc.parse_dnsfilter({"statistics": stats}, "p")["stats_keys"]
+
+    def test_normal_no_values(self):
+        d = fc.parse_dnsfilter(FULL, "p")
+        self.assertEqual(d["stats_keys"],
+                         ["dnsQueryCount", "dnsQueryCount.blocked", "dnsQueryCount.total"])
+        self.assertNotIn("345", json.dumps(d["stats_keys"]))
+
+    def test_extra_keys(self):
+        k = self.keys({"dnsQueryCount": {"total": 1, "cached": 3}, "newScalar": 5,
+                       "deep": {"x": {"y": 1}}})
+        self.assertEqual(k, ["deep", "deep.x", "dnsQueryCount", "dnsQueryCount.cached",
+                             "dnsQueryCount.total", "newScalar"])
+
+    def test_missing_statistics(self):
+        self.assertIsNone(fc.parse_dnsfilter({}, "p")["stats_keys"])
+        for val in ([1], "x", None):
+            self.assertIsNone(self.keys(val))
+
+    def test_limits(self):
+        self.assertEqual(len(self.keys({f"k{i:03d}": 1 for i in range(80)})), 50)
+        self.assertTrue(all(len(x) <= 100 for x in self.keys({"a" * 300: {"b" * 300: 1}})))
+
+    def test_stored_as_json(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = fc.Database(Path(d) / "s.db")
+            db.insert_dnsfilter(1, fc.parse_dnsfilter(FULL, "p"))
+            db.insert_dnsfilter(2, fc.parse_dnsfilter({}, "p"))
+            rows = dict(db._conn.execute("SELECT ts, stats_keys FROM dnsfilter_stats"))
+            self.assertEqual(json.loads(rows[1]),
+                             ["dnsQueryCount", "dnsQueryCount.blocked", "dnsQueryCount.total"])
+            self.assertIsNone(rows[2])
+            db.close()
+
+
+class FakeAuth:
+    def __init__(self):
+        self.opener = None
+        self.get_sid_calls = 0
+
+    def ensure_sid(self):
+        return "sid0"
+
+    def get_sid(self):
+        self.get_sid_calls += 1
+        return f"sid{self.get_sid_calls}"
+
+
+class FakeResp:
+    def __init__(self, obj):
+        self._raw = json.dumps(obj).encode()
+
+    def read(self, n=-1):
+        return self._raw
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def http_error(code, body):
+    raw = body if isinstance(body, bytes) else json.dumps(body).encode()
+    return urllib.error.HTTPError("http://x", code, "err", {}, io.BytesIO(raw))
+
+
+class Retry3001Tests(unittest.TestCase):
+    def run_fetch(self, errors):
+        """errors: exceptions for the first calls, then a valid response."""
+        calls = []
+
+        class Opener:
+            def open(self, req, timeout=None):
+                calls.append(req.get_header("Authorization"))
+                if len(calls) <= len(errors):
+                    raise errors[len(calls) - 1]
+                return FakeResp({"enabled": True})
+
+        auth = FakeAuth()
+        try:
+            r = fc._fetch("http://fritz.example", auth, "beta/dnsfilter", 5, opener=Opener())
+        except urllib.error.HTTPError as exc:
+            r = exc
+        return r, calls, auth
+
+    def test_retry_code_3001_list(self):
+        r, calls, auth = self.run_fetch([http_error(400, [{"code": 3001, "message": "x"}])])
+        self.assertEqual(calls, ["AVM-SID sid0", "AVM-SID sid1"])
+        self.assertEqual(auth.get_sid_calls, 1)
+        self.assertEqual(r, {"enabled": True})
+
+    def test_retry_object_string_code_and_errors_list(self):
+        for body in ({"code": "3001"}, {"errors": [{"code": 3001}]}):
+            _, calls, _ = self.run_fetch([http_error(400, body)])
+            self.assertEqual(len(calls), 2)
+
+    def test_retry_permission_denied_message(self):
+        _, calls, _ = self.run_fetch([http_error(400, [{"code": 1, "message": "Permission Denied"}])])
+        self.assertEqual(len(calls), 2)
+
+    def test_no_retry_other_code_incl_3002(self):
+        for code in (3000, 3002):
+            r, calls, auth = self.run_fetch([http_error(400, [{"code": code, "message": "bad path"}])])
+            self.assertIsInstance(r, urllib.error.HTTPError)
+            self.assertEqual((len(calls), auth.get_sid_calls), (1, 0))
+
+    def test_no_retry_unparseable_or_empty_body(self):
+        for body in (b"<html>", b"", b"[]", b"42"):
+            r, calls, auth = self.run_fetch([http_error(400, body)])
+            self.assertIsInstance(r, urllib.error.HTTPError)
+            self.assertEqual(auth.get_sid_calls, 0)
+
+    def test_retry_only_once(self):
+        r, calls, auth = self.run_fetch([http_error(400, [{"code": 3001}]),
+                                         http_error(400, [{"code": 3001}])])
+        self.assertIsInstance(r, urllib.error.HTTPError)
+        self.assertEqual((len(calls), auth.get_sid_calls), (2, 1))
+
+    def test_401_still_retried(self):
+        _, calls, _ = self.run_fetch([http_error(401, b"")])
+        self.assertEqual(len(calls), 2)
+
+    def test_body_read_limited(self):
+        from unittest import mock
+        exc = http_error(400, b"x" * 100000)
+        with mock.patch.object(exc, "read", wraps=exc.read) as rd:
+            fc._is_expired_sid(exc)
+        rd.assert_called_once_with(4000)
+
+
+class ListUpdatesTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = fc.Database(Path(self.tmp.name) / "t.db")
+        self.q = self.db._conn.execute
+
+    def tearDown(self):
+        self.db.close()
+        self.tmp.cleanup()
+
+    @staticmethod
+    def lst(uid, lts, **kw):
+        d = {"uid": uid, "latest_ts": lts, "latest_cause": "manual", "latest_status": "ok",
+             "last_success_ts": lts}
+        d.update(kw)
+        return d
+
+    def snap(self, ts, *lists):
+        self.db.insert_dnsfilter(ts, {"lists": list(lists)})
+
+    def test_columns(self):
+        cols = [r[1] for r in self.q("PRAGMA table_info(dnsfilter_list_updates)")]
+        self.assertEqual(cols, ["uid", "latest_ts", "latest_cause", "latest_status",
+                                "last_success_ts", "first_seen_ts"])
+
+    def test_same_ts_once_first_observation_stays(self):
+        self.snap(1000, self.lst("a", 900, latest_status="running"))
+        self.snap(2000, self.lst("a", 900))
+        rows = self.q("SELECT uid, latest_ts, latest_status, first_seen_ts "
+                      "FROM dnsfilter_list_updates").fetchall()
+        self.assertEqual(rows, [("a", 900, "running", 1000)])
+
+    def test_new_ts_second_row(self):
+        self.snap(1000, self.lst("a", 900))
+        self.snap(2000, self.lst("a", 1900))
+        rows = self.q("SELECT latest_ts, first_seen_ts FROM dnsfilter_list_updates "
+                      "ORDER BY latest_ts").fetchall()
+        self.assertEqual(rows, [(900, 1000), (1900, 2000)])
+
+    def test_invalid_ts_skipped(self):
+        self.snap(1000, self.lst("a", 0), self.lst("b", None), self.lst("c", True),
+                  self.lst("d", "5"), self.lst("e", 1.5))
+        self.assertEqual(self.q("SELECT COUNT(*) FROM dnsfilter_list_updates").fetchone()[0], 0)
+
+    def test_parsed_response_feeds_table(self):
+        self.db.insert_dnsfilter(1000, fc.parse_dnsfilter(FULL, "p"))
+        rows = self.q("SELECT uid, latest_ts, latest_status FROM dnsfilter_list_updates").fetchall()
+        self.assertEqual(rows, [("list-1", 1700000100, "ok")])  # list-2 has no timestamp
+
+    def test_retention_90_days_keeps_newest_per_uid(self):
+        now = int(time.time())
+        d = 86400
+        ins = "INSERT INTO dnsfilter_list_updates (uid, latest_ts) VALUES (?, ?)"
+        for uid, ts in [("a", now - 200 * d), ("a", now - 150 * d), ("a", now - 10 * d),
+                        ("b", now - 200 * d), ("b", now - 95 * d), ("c", now - 89 * d),
+                        ("c", now - 91 * d)]:
+            self.q(ins, (uid, ts))
+        self.db._conn.commit()
+        res = self.db.run_retention(730, now)  # retention_days must not matter
+        rows = self.q("SELECT uid, latest_ts FROM dnsfilter_list_updates "
+                      "ORDER BY uid, latest_ts").fetchall()
+        self.assertEqual(rows, [("a", now - 10 * d), ("b", now - 95 * d), ("c", now - 89 * d)])
+        self.assertEqual(res["dnsfilter_list_updates"], 4)
+
+    def test_stats_retention_stays_configurable(self):
+        now = int(time.time())
+        self.db.insert_dnsfilter(now - 100 * 86400, fc.parse_dnsfilter(FULL, "p"))
+        self.assertEqual(self.db.run_retention(730, now)["dnsfilter_stats"], 0)
+        self.assertEqual(self.db.run_retention(30, now)["dnsfilter_stats"], 1)
 
 
 class MigrationTests(unittest.TestCase):
@@ -344,6 +569,7 @@ class MigrationTests(unittest.TestCase):
             cols = self._cols(p)
             self.assertIn("n_domains_allow", cols)
             self.assertIn("n_domains_deny", cols)
+            self.assertEqual(cols[-2:], ["n_domains_disabled", "stats_keys"])
             fc.Database(p).close()  # second init: no error, no duplicate columns
             self.assertEqual(self._cols(p), cols)
             conn = sqlite3.connect(p)

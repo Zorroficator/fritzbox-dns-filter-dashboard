@@ -304,6 +304,13 @@ tr.inactive td { color: var(--fg-2); }
   }
 }
 
+/* === Filter list updates === */
+.listupd-recent { margin-top: 16px; }
+.listupd-list { margin: 6px 0 0; padding: 0; list-style: none; max-width: 40ch; }
+.listupd-list li { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 6px 0; border-top: 1px solid var(--rule); font-size: 13px; font-variant-numeric: tabular-nums; }
+.listupd-list li:first-child { border-top: 0; }
+
 /* === Public demo === */
 .demo-note {
   text-align: center;

@@ -5,8 +5,7 @@
 
   <!-- title lockup (left half) -->
   <text x="60" y="140" font-family="'SF Pro Display', 'Segoe UI', Helvetica, Arial, sans-serif" font-size="64" font-weight="700" fill="#f8fafc">F<tspan fill="#6aa6f8">Trap</tspan></text>
-  <text x="62" y="175" font-family="'SF Pro Display', 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" fill="#e2e8f0">Statistik-Dashboard für den DNS-Filter der FRITZ!Box</text>
-  <text x="62" y="200" font-family="'SF Pro Display', 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" fill="#cbd5e1">Statistics dashboard for the FRITZ!Box DNS filter</text>
+  <text x="62" y="175" font-family="'SF Pro Display', 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" fill="#e2e8f0">Statistics dashboard for the FRITZ!Box DNS filter</text>
 
   <!-- diagram (right half) -->
   <!-- queries node -->

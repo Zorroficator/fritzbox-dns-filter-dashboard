@@ -11,15 +11,17 @@ Requirements and caveats
     like an admin password.
   * The endpoint exists from FRITZ!OS 8.50 and in 8.4x lab firmware (beta API, undocumented). The path may
     change with the firmware; the box answers HTTP 400 "permission denied"
-    even for unknown paths. Therefore several paths can be configured and are
-    tried in order (first success wins).
+    even for unknown paths (error code 3002 "bad path" on 8.50; an expired
+    session ID is reported as HTTP 400 with code 3001). Therefore several
+    paths can be configured and are tried in order (first success wins).
   * Python >= 3.11, standard library only.
 
 Privacy rules (deliberate)
   * The raw response is never stored, logged or printed.
   * Of ``clients`` / ``domains`` / ``profiles`` only the number of entries is
     kept, never their content. For ``domains`` the entries are additionally
-    counted by ``action`` (allow / deny); the domain names are never read.
+    counted by ``action`` (allow / deny) and ``enabled``; the domain names are never
+    read. Of ``statistics`` only the field names are kept, never the values.
   * JSON errors are logged with the response length only.
   * Responses larger than 2 MB are rejected.
   * The password is never logged.
@@ -140,25 +142,53 @@ def _get_len(obj: Any, key: str) -> int | None:
     return None
 
 
-def _count_actions(obj: Any, key: str) -> tuple[int | None, int | None]:
-    """Count list entries by ``action`` ("allow" / "deny") - only counters.
+def _count_actions(obj: Any, key: str) -> tuple[int | None, int | None, int | None]:
+    """Count list entries by ``action`` and ``enabled`` - only counters.
 
-    Case-insensitive; unknown or missing actions are counted in neither.
-    Entries with ``enabled: false`` are counted too. Not a list -> (None, None).
+    Only the fields ``action`` and ``enabled`` are read. Returns
+    (allow, deny, disabled). ``action`` is case-insensitive; unknown or missing
+    actions are counted in neither allow nor deny. Disabled entries are still
+    counted in allow/deny. disabled = entries with ``enabled`` False/0/"0"/"false";
+    a missing or null ``enabled`` does NOT count as disabled.
+    Not a list -> (None, None, None).
     """
     val = obj.get(key) if isinstance(obj, dict) else None
     if not isinstance(val, list):
-        return None, None
-    allow = deny = 0
+        return None, None, None
+    allow = deny = disabled = 0
     for entry in val:
-        action = entry.get("action") if isinstance(entry, dict) else None
+        if not isinstance(entry, dict):
+            continue
+        action = entry.get("action")
         if isinstance(action, str):
             action = action.strip().lower()
             if action == "allow":
                 allow += 1
             elif action == "deny":
                 deny += 1
-    return allow, deny
+        en = entry.get("enabled")
+        if en is not None:  # null behaves like a missing field: not disabled
+            if isinstance(en, str):
+                en = en.strip().lower() not in ("", "0", "false")
+            if not en:
+                disabled += 1
+    return allow, deny, disabled
+
+
+def _stats_keys(data: dict) -> list[str] | None:
+    """Field names of ``statistics`` (one level deep, dict children prefixed) - never values.
+
+    Sorted, names truncated to 100 characters, at most 50 entries. Not a dict -> None.
+    """
+    stats = data.get("statistics")
+    if not isinstance(stats, dict):
+        return None
+    names: set[str] = set()
+    for k, v in stats.items():
+        names.add(str(k)[:100])
+        if isinstance(v, dict):
+            names.update(f"{k}.{c}"[:100] for c in v.keys())
+    return sorted(names)[:50]
 
 
 def _parse_list(item: Any) -> dict | None:
@@ -214,7 +244,7 @@ def parse_dnsfilter(data: Any, path: str) -> dict:
         _note_missing("filterlists")
         raw_lists = []
     lists = [p for p in (_parse_list(i) for i in raw_lists) if p is not None]
-    n_allow, n_deny = _count_actions(data, "domains")
+    n_allow, n_deny, n_disabled = _count_actions(data, "domains")
     return {
         "path": path,
         "enabled": _get_int(data, "enabled", "enabled"),
@@ -229,17 +259,50 @@ def parse_dnsfilter(data: Any, path: str) -> dict:
         "n_domains": _get_len(data, "domains"),
         "n_domains_allow": n_allow,
         "n_domains_deny": n_deny,
+        "n_domains_disabled": n_disabled,
         "n_profiles": _get_len(data, "profiles"),
         "top_keys": sorted(str(k) for k in data.keys()),
+        "stats_keys": _stats_keys(data),
         "lists": lists,
     }
 
 
 # ── Fetching ──────────────────────────────────────────────────────────────────
 
+def _is_expired_sid(exc: urllib.error.HTTPError) -> bool:
+    """True for an error response with code 3001 or "permission denied" (reads <= 4000 bytes).
+
+    The box reports an expired session ID as HTTP 400 with code 3001 (code 3002 means
+    "bad path" and is no reason to log in again). The error body is never logged.
+    """
+    try:
+        body = json.loads(exc.read(4000).decode("utf-8", "replace"))
+    except (ValueError, OSError, AttributeError):
+        return False
+    items: list = []
+    if isinstance(body, list):
+        items = body
+    elif isinstance(body, dict):
+        errs = body.get("errors")
+        items = [body] + (errs if isinstance(errs, list) else [])
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        if str(it.get("code")) == "3001":
+            return True
+        msg = it.get("message")
+        if isinstance(msg, str) and "permission denied" in msg.lower():
+            return True
+    return False
+
+
 def _fetch(box_url: str, auth: FritzAuth, path: str, timeout: float,
            opener: urllib.request.OpenerDirector | None = None) -> Any:
-    """One GET on /api/v0/<path>. 401/403 -> new SID + one retry; 400 is a hard error."""
+    """One GET on /api/v0/<path>. 401/403 -> new SID + one retry.
+
+    HTTP 400 with code 3001 / "permission denied" (how the box reports an expired SID)
+    also gets exactly one new SID + retry; every other 400 is a hard error.
+    """
     url = f"{box_url.rstrip('/')}/api/v0/{path.lstrip('/')}"
     opener = opener or auth.opener
 
@@ -256,6 +319,9 @@ def _fetch(box_url: str, auth: FritzAuth, path: str, timeout: float,
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):
             log.debug("DNS filter %s: HTTP %d - renewing SID and retrying", path, exc.code)
+            raw = _get(auth.get_sid())
+        elif exc.code == 400 and _is_expired_sid(exc):
+            log.debug("DNS filter %s: HTTP 400 (code 3001) - renewing SID and retrying", path)
             raw = _get(auth.get_sid())
         else:
             raise
@@ -326,7 +392,7 @@ CREATE TABLE IF NOT EXISTS dnsfilter_stats (
     n_profiles           INTEGER,
     source_path          TEXT,
     top_keys             TEXT       -- sorted top-level keys (structure drift)
-);
+);  -- n_domains_allow/_deny/_disabled and stats_keys: see STATS_MIGRATIONS
 
 CREATE TABLE IF NOT EXISTS dnsfilter_lists (
     uid             TEXT PRIMARY KEY,
@@ -344,6 +410,18 @@ CREATE TABLE IF NOT EXISTS dnsfilter_lists (
     first_seen_ts   INTEGER,
     observed_ts     INTEGER
 );
+
+-- Run history per filter list: the box does not fill manualUpdate.lastTimestamp,
+-- only latestUpdate per list is reliable (dnsfilter_lists is an upsert without history).
+CREATE TABLE IF NOT EXISTS dnsfilter_list_updates (
+    uid             TEXT    NOT NULL,
+    latest_ts       INTEGER NOT NULL,   -- latestUpdate.timestamp of the box
+    latest_cause    TEXT,
+    latest_status   TEXT,
+    last_success_ts INTEGER,
+    first_seen_ts   INTEGER,            -- snapshot ts in which the run was first seen
+    PRIMARY KEY (uid, latest_ts)
+);
 """
 
 
@@ -351,7 +429,11 @@ CREATE TABLE IF NOT EXISTS dnsfilter_lists (
 STATS_MIGRATIONS = (
     ("n_domains_allow", "INTEGER"),
     ("n_domains_deny", "INTEGER"),
+    ("n_domains_disabled", "INTEGER"),
+    ("stats_keys", "TEXT"),  # JSON list of statistics field names (drift check, no values)
 )
+
+LIST_UPDATES_RETENTION_DAYS = 90  # fixed, independent of retention_days
 
 
 class Database:
@@ -412,17 +494,19 @@ class Database:
             "INSERT OR IGNORE INTO dnsfilter_stats "
             "(ts, enabled, blocked, total, auto_update_enabled, auto_update_interval, "
             "auto_update_last_ts, manual_update_last_ts, n_clients, n_domains, n_profiles, "
-            "source_path, top_keys, n_domains_allow, n_domains_deny) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "source_path, top_keys, n_domains_allow, n_domains_deny, n_domains_disabled, "
+            "stats_keys) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (ts, d.get("enabled"), d.get("blocked"), d.get("total"),
              d.get("auto_update_enabled"), d.get("auto_update_interval"),
              d.get("auto_update_last_ts"), d.get("manual_update_last_ts"),
              d.get("n_clients"), d.get("n_domains"), d.get("n_profiles"),
              d.get("path"), json.dumps(d.get("top_keys") or []),
-             d.get("n_domains_allow"), d.get("n_domains_deny")),
+             d.get("n_domains_allow"), d.get("n_domains_deny"), d.get("n_domains_disabled"),
+             None if d.get("stats_keys") is None else json.dumps(d["stats_keys"])),
         )
         for lst in d.get("lists") or []:
             self._upsert_list(cur, lst, ts)
+            self._record_update(cur, lst, ts)
         self._conn.commit()
 
     @staticmethod
@@ -446,17 +530,45 @@ class Database:
              lst.get("latest_error"), lst.get("latest_cause"), now, now),
         )
 
+    @staticmethod
+    def _record_update(cur, lst: dict, now: int) -> None:
+        """Keep every observed list run (uid, latest_ts).
+
+        INSERT OR IGNORE: the first observation stays (its status may still be preliminary).
+        Only a real integer latest_ts other than 0 is recorded.
+        """
+        lts = lst.get("latest_ts")
+        if not isinstance(lts, int) or isinstance(lts, bool) or lts == 0:
+            return
+        cur.execute(
+            "INSERT OR IGNORE INTO dnsfilter_list_updates "
+            "(uid, latest_ts, latest_cause, latest_status, last_success_ts, first_seen_ts) "
+            "VALUES (?,?,?,?,?,?)",
+            (lst["uid"], lts, lst.get("latest_cause"), lst.get("latest_status"),
+             lst.get("last_success_ts"), now),
+        )
+
     def run_retention(self, retention_days: int, now: int | None = None) -> dict:
-        """Delete old rows of dnsfilter_stats and poller_health.
+        """Delete old rows of dnsfilter_stats, poller_health and dnsfilter_list_updates.
 
         dnsfilter_lists is kept on purpose: one row per list, no history.
+        dnsfilter_list_updates is pruned after a fixed 90 days (not retention_days); the
+        newest row per uid always stays, otherwise the next snapshot (the box still
+        reports the same latestUpdate) would re-insert it and the history would flicker.
         """
-        cutoff = (now if now is not None else int(time.time())) - retention_days * SECS_PER_DAY
+        now = now if now is not None else int(time.time())
+        cutoff = now - retention_days * SECS_PER_DAY
         cur = self._conn.cursor()
         result = {}
         for table in ("poller_health", "dnsfilter_stats"):  # static names, no injection
             cur.execute(f"DELETE FROM {table} WHERE ts < ?", (cutoff,))
             result[table] = cur.rowcount
+        cur.execute(
+            "DELETE FROM dnsfilter_list_updates WHERE latest_ts < ? AND latest_ts < "
+            "(SELECT MAX(u2.latest_ts) FROM dnsfilter_list_updates u2 "
+            "WHERE u2.uid = dnsfilter_list_updates.uid)",
+            (now - LIST_UPDATES_RETENTION_DAYS * SECS_PER_DAY,))
+        result["dnsfilter_list_updates"] = cur.rowcount
         self._conn.commit()
         return result
 

@@ -7,7 +7,7 @@
 Pi-hole-artige Statistik für den eingebauten DNS-Filter von FRITZ!OS 8.4x/8.50: ein kleiner Sammler, eine SQLite-Datenbank und ein statisches Web-Dashboard. Alle Abfragen an die Box sind rein lesend.
 
 > [!WARNING]
-> **Beta-Schnittstelle.** Den DNS-Filter gibt es ab FRITZ!OS 8.50 (final seit 29.09.2026, zunächst für 7690/5690/5630, weitere Modelle folgen) sowie in Labor-Versionen von 8.4x. Entwickelt und getestet wurde mit **FRITZ!OS 8.40 Labor, Build 136730**. Drittprojekte berichten denselben Pfad (`/api/v0/beta/dnsfilter`) auch auf 8.50; das wurde hier nicht getestet. Die Schnittstelle bleibt undokumentierte Beta und kann sich mit jedem Firmware-Update ändern oder wegfallen. Das Projekt ist daher experimentell – mit Vorsicht zu genießen.
+> **Beta-Schnittstelle.** Den DNS-Filter gibt es ab FRITZ!OS 8.50 (final seit 29.09.2026, zunächst für 7690/5690/5630, weitere Modelle folgen) sowie in Labor-Versionen von 8.4x. Entwickelt wurde mit FRITZ!OS 8.40 Labor (Build 136730), getestet ist mit **FRITZ!OS 8.50 (Build 136731)**; dort funktioniert derselbe Pfad (`/api/v0/beta/dnsfilter`). Die Schnittstelle bleibt undokumentierte Beta und kann sich mit jedem Firmware-Update ändern oder wegfallen. Das Projekt ist daher experimentell – mit Vorsicht zu genießen.
 
 **🔴 [Live-Demo-Dashboard](https://zorroficator.github.io/fritzbox-dns-filter-dashboard/)** – statische Seite mit synthetischen Daten.
 
@@ -94,15 +94,20 @@ Sind die Zugangsdaten-Variablen gesetzt, kann `--config` entfallen.
 - `enabled` – Filter an oder aus
 - `statistics.dnsQueryCount.blocked` / `.total` – Zähler **seit dem letzten Neustart der Box**
 - `filterlists[]` – je Liste `status` und `latestUpdate`
-- `automaticUpdate`, `manualUpdate` – an/aus, Intervall und Zeitpunkte der letzten Aktualisierung; das Dashboard zeigt sie an (nur Anzeige, FTrap ändert nichts)
+- `automaticUpdate`, `manualUpdate` – an/aus, Intervall und Zeitpunkte der letzten Aktualisierung; das Dashboard zeigt sie an (nur Anzeige, FTrap ändert nichts). Auf der getesteten Box bleibt `manualUpdate.lastTimestamp` auch nach einer manuellen Aktualisierung 0; manuelle Läufe werden daher aus `latestUpdate` der Listen übernommen (siehe unten)
 - `clients`, `domains`, `profiles` – Konfigurationslisten (Ausnahmen, Profile); gespeichert wird nur die Anzahl der Einträge
-- `domains[].action` (`allow` / `deny`) – wird nur genutzt, um erlaubte und gesperrte Ausnahmen getrennt zu zählen; Einträge mit `enabled: false` werden mitgezählt, unbekannte Aktionen zählen nur in der Gesamtzahl
+- `domains[].action` (`allow` / `deny`) und `domains[].enabled` – werden nur genutzt, um erlaubte, gesperrte und deaktivierte Ausnahmen getrennt zu zählen; deaktivierte Einträge zählen weiterhin als allow/deny, unbekannte Aktionen zählen nur in der Gesamtzahl, ein fehlendes oder leeres (null) `enabled` gilt nicht als deaktiviert
+- `statistics` – gespeichert werden nur die **Feldnamen** (`stats_keys`, nie Werte). Fügt die Box Statistikfelder hinzu oder lässt welche weg, zeigt das Dashboard einen Hinweis auf geänderte Struktur
+
+### Filterlisten-Aktualisierung
+
+Die Dashboard-Karte „Filterlisten-Aktualisierung“ zeigt automatische und manuelle Läufe, die Anzahl in 24 Stunden / 7 Tagen / 30 Tagen und den nächsten erwarteten automatischen Lauf. Da die Box `manualUpdate.lastTimestamp` nicht füllt, hält der Sammler jeden verschiedenen `latestUpdate.timestamp` je Liste in der Tabelle `dnsfilter_list_updates` fest (`uid`, `latest_ts`, `latest_cause`, `latest_status`, `last_success_ts`, `first_seen_ts`). Läufe mit der Ursache `manual` bilden die manuelle Historie. Diese Historie wird fest **90 Tage** aufbewahrt, unabhängig von `retention_days`; die jeweils neueste Zeile je Liste bleibt immer stehen.
 
 ## Erkenntnisse und Grenzen
 
 - Die Box liefert **keine Werte pro Domain oder pro Gerät**, daher gibt es keine Top-Listen. Geprüfte Unterpfade wie `/statistics`, `/top` und `/log` antworten mit HTTP 400.
 - Blockierte Domains werden mit `0.0.0.0` beantwortet.
-- Es handelt sich um eine Beta-Schnittstelle: Der Pfad kann sich ändern. Die Box antwortet auch für unbekannte Pfade mit HTTP 400 „permission denied“, ein falscher Pfad sieht also wie ein Rechteproblem aus. Alternative Pfade lassen sich in `paths` der Konfiguration eintragen; sie werden der Reihe nach probiert, der erste Erfolg gilt.
+- Es handelt sich um eine Beta-Schnittstelle: Der Pfad kann sich ändern. Die Box antwortet auch für unbekannte Pfade mit HTTP 400 „permission denied“, ein falscher Pfad sieht also wie ein Rechteproblem aus. Fehlercodes unter FRITZ!OS 8.50: **3001** = Sitzungskennung abgelaufen (der Sammler meldet sich einmal neu an und wiederholt die Abfrage), **3002** = „bad path“ (unbekannter Unterpfad, keine Neuanmeldung). Alternative Pfade lassen sich in `paths` der Konfiguration eintragen; sie werden der Reihe nach probiert, der erste Erfolg gilt.
 - Zuwachs: Die Zähler sind Summen seit dem Neustart der Box. Der Zuwachs ist die Differenz zum vorherigen Messpunkt; springt ein Zähler zurück (Neustart), ist der Zuwachs der neue Wert selbst, da der Zähler bei 0 begann. Lücken werden nicht interpoliert.
 - Die Box-Oberfläche rundet den Blockier-Anteil auf ganze Prozent auf; FTrap zeigt eine Nachkommastelle.
 
@@ -135,7 +140,7 @@ python3 demo/make_sample.py              # schreibt synthetische Daten nach ./da
 python3 demo/make_sample.py --out DIR    # oder in ein anderes Verzeichnis
 ```
 
-Erzeugt 30 Tage erfundener Zähler inklusive eines simulierten Box-Neustarts. `ftrap.json` ist mit `demo: true` markiert; in diesem Modus verschiebt die Seite alle Zeitstempel im Browser, damit die statische Demo nie veraltet wirkt. Der GitHub-Pages-Workflow baut die Live-Demo so.
+Erzeugt 30 Tage erfundener Zähler inklusive eines simulierten Box-Neustarts, automatischer Listen-Aktualisierungen alle 8 Stunden und zwei manueller Läufe (füllt die Karte „Filterlisten-Aktualisierung“). `ftrap.json` ist mit `demo: true` markiert; in diesem Modus verschiebt die Seite alle Zeitstempel im Browser, damit die statische Demo nie veraltet wirkt. Der GitHub-Pages-Workflow baut die Live-Demo so.
 
 ## Tests
 

@@ -58,10 +58,14 @@ OUT_DIR = BASE_DIR / "data"
 
 STALE_COLLECTOR_S = 900            # collector data older than this -> warning
 DEFAULT_LIST_MAX_AGE_S = 48 * 3600  # used when the interval is missing
+MANUAL_GROUP_S = 900               # manual-run timestamps closer than this are one run
+RUN_WINDOWS = (("24h", 86400), ("7d", 7 * 86400), ("30d", 30 * 86400))
+RECENT_RUNS = 10
 EXPECTED_TOP_KEYS = frozenset([
     "automaticUpdate", "clients", "domains", "enabled",
     "filterlists", "manualUpdate", "profiles", "statistics",
 ])
+EXPECTED_STATS_KEYS = frozenset(["dnsQueryCount", "dnsQueryCount.blocked", "dnsQueryCount.total"])
 
 # name -> (file name, bucket kind, bucket count)
 SERIES = {
@@ -197,16 +201,110 @@ def list_warnings(lst, interval_s, auto_enabled, now):
     return reasons
 
 
-def drift_info(top_keys_json):
-    if not top_keys_json:
+# --- Update runs ------------------------------------------------------------------
+
+def detect_runs(rows):
+    """rows: [(snap_ts, auto_last_ts, manual_last_ts)] ascending.
+
+    A run is a value != 0 (and not NULL) that differs from the previous value of the
+    same kind; the first observed value != 0 counts with its own timestamp. 0/NULL are
+    skipped (the previous value is kept). Duplicates (ts, kind) are dropped.
+    Returns [{"ts", "kind"}] ascending by ts."""
+    prev = {"auto": None, "manual": None}
+    seen = set()
+    for _snap, auto, manual in rows:
+        for kind, val in (("auto", auto), ("manual", manual)):
+            if not isinstance(val, (int, float)) or isinstance(val, bool) or val == 0:
+                continue
+            if val != prev[kind]:
+                seen.add((int(val), kind))
+            prev[kind] = val
+    return [{"ts": t, "kind": k} for t, k in sorted(seen)]
+
+
+def run_counts(runs, now):
+    out = {}
+    for key, span in RUN_WINDOWS:
+        sel = [r for r in runs if now - span <= r["ts"] <= now]
+        out[key] = {"auto": sum(1 for r in sel if r["kind"] == "auto"),
+                    "manual": sum(1 for r in sel if r["kind"] == "manual")}
+    return out
+
+
+def next_expected(runs, auto_enabled, interval_s):
+    if not auto_enabled or not isinstance(interval_s, (int, float)) or interval_s <= 0:
+        return None
+    autos = [r["ts"] for r in runs if r["kind"] == "auto"]
+    return max(autos) + int(interval_s) if autos else None
+
+
+def fetch_run_rows(conn, have):
+    if not {"auto_update_last_ts", "manual_update_last_ts"} <= have:
+        return []
+    return conn.execute("SELECT ts, auto_update_last_ts, manual_update_last_ts "
+                        "FROM dnsfilter_stats ORDER BY ts").fetchall()
+
+
+def fetch_manual_runs(conn):
+    """Manual runs from dnsfilter_list_updates (the box does not fill
+    manualUpdate.lastTimestamp).
+
+    Only cause 'manual' (case-insensitive) with latest_ts > 0. Timestamps at most
+    MANUAL_GROUP_S apart count as one run (one click refreshes all lists); the run
+    timestamp is the earliest of the group. Without the table: []."""
+    if not has_table(conn, "dnsfilter_list_updates"):
+        return []
+    tss = []
+    for t, cause in conn.execute("SELECT latest_ts, latest_cause FROM dnsfilter_list_updates"):
+        if (isinstance(t, int) and not isinstance(t, bool) and t > 0
+                and isinstance(cause, str) and cause.strip().lower() == "manual"):
+            tss.append(t)
+    runs, prev = [], None
+    for t in sorted(set(tss)):
+        if prev is None or t - prev > MANUAL_GROUP_S:
+            runs.append({"ts": t, "kind": "manual"})
+        prev = t
+    return runs
+
+
+def merge_runs(runs, manual_runs):
+    """Adds manual runs from the history to the detect_runs result; a historical run is
+    dropped if runs already has a manual run within MANUAL_GROUP_S."""
+    known = [r["ts"] for r in runs if r["kind"] == "manual"]
+    extra = [m for m in manual_runs
+             if not any(abs(m["ts"] - k) <= MANUAL_GROUP_S for k in known)]
+    return sorted(runs + extra, key=lambda r: (r["ts"], r["kind"]))
+
+
+def _key_set(json_text):
+    """JSON list -> set; None if empty/NULL, False if unreadable."""
+    if not json_text:
         return None
     try:
-        keys = set(json.loads(top_keys_json))
+        val = json.loads(json_text)
+        return set(val) if isinstance(val, list) else False
     except (ValueError, TypeError):
+        return False
+
+
+def drift_info(top_keys_json, stats_keys_json=None):
+    """Structure hint: deviation of the top-level keys and/or the statistics field names.
+
+    If a source is missing (NULL / column absent) there is no hint for it; an unreadable
+    stats_keys column is ignored."""
+    info = {"missing": [], "added": [], "stats_missing": [], "stats_added": []}
+    top = _key_set(top_keys_json)
+    if top is False:
         return {"missing": [], "added": [], "unparseable": True}
-    missing = sorted(EXPECTED_TOP_KEYS - keys)
-    added = sorted(keys - EXPECTED_TOP_KEYS)
-    return {"missing": missing, "added": added} if (missing or added) else None
+    if top is not None:
+        info["missing"] = sorted(EXPECTED_TOP_KEYS - top)
+        info["added"] = sorted(top - EXPECTED_TOP_KEYS)
+    stats = _key_set(stats_keys_json)
+    if stats:
+        stats = {str(k) for k in stats}
+        info["stats_missing"] = sorted(EXPECTED_STATS_KEYS - stats)
+        info["stats_added"] = sorted(stats - EXPECTED_STATS_KEYS)
+    return info if any(info.values()) else None
 
 
 # --- DB -------------------------------------------------------------------------
@@ -247,15 +345,17 @@ def build(conn, now, tz=None):
         base["lists"] = {"available": False, "items": []}
         return base, empty_series
 
-    # allow/deny counters exist only in databases written by newer collectors
+    # allow/deny/disabled counters and stats_keys exist only in databases written by newer collectors
     have = {r[1] for r in conn.execute("PRAGMA table_info(dnsfilter_stats)")}
-    ex_cols = ", ".join(c if c in have else "NULL" for c in ("n_domains_allow", "n_domains_deny"))
+    ex_cols = ", ".join(c if c in have else "NULL" for c in ("n_domains_allow", "n_domains_deny",
+                                                                "n_domains_disabled", "stats_keys"))
+    au_cols = ", ".join(c if c in have else "NULL" for c in ("auto_update_last_ts", "manual_update_last_ts"))
     last = conn.execute(
         "SELECT ts, enabled, blocked, total, auto_update_enabled, auto_update_interval, "
-        "auto_update_last_ts, manual_update_last_ts, n_clients, n_domains, n_profiles, top_keys, "
+        + au_cols + ", n_clients, n_domains, n_profiles, top_keys, "
         + ex_cols + " FROM dnsfilter_stats ORDER BY ts DESC LIMIT 1").fetchone()
     (l_ts, enabled, l_blocked, l_total, au_en, au_int, au_last, man_last,
-     n_clients, n_domains, n_profiles, top_keys, n_allow, n_deny) = last
+     n_clients, n_domains, n_profiles, top_keys, n_allow, n_deny, n_disabled, stats_keys) = last
 
     # compute increments once over the largest window (30 local days)
     month_start = bucket_starts("day", SERIES["month"][2], now, tz)[0]
@@ -272,6 +372,20 @@ def build(conn, now, tz=None):
     today = sum_since(deltas, t0)
     today["since_ts"] = t0
     today["effective_since_ts"] = max(t0, first_ts)
+
+    # Update runs (over the whole retention period)
+    runs = detect_runs(fetch_run_rows(conn, have))
+    hist_manual = fetch_manual_runs(conn)
+    runs = merge_runs(runs, hist_manual)
+    if hist_manual:
+        man_last = max([man_last or 0] + [m["ts"] for m in hist_manual])
+    list_updates = {
+        "available": True, "observed_since": first_ts, "interval_s": au_int,
+        "auto_enabled": None if au_en is None else bool(au_en),
+        "counts": run_counts(runs, now),
+        "recent": list(reversed(runs))[:RECENT_RUNS],
+        "next_expected_ts": next_expected(runs, au_en, au_int),
+    }
 
     # Lists
     lists = {"available": False, "items": [], "entries_active": None}
@@ -321,12 +435,14 @@ def build(conn, now, tz=None):
         "since_restart": {"blocked": l_blocked, "total": l_total, "pct": pct(l_blocked, l_total)
                           if isinstance(l_blocked, (int, float)) and isinstance(l_total, (int, float)) else None},
         "lists": lists,
+        "list_updates": list_updates,
         "auto_update": {"enabled": None if au_en is None else bool(au_en),
                         "interval_s": au_int, "last_ts": au_last, "manual_last_ts": man_last},
-        "exceptions": {"n_domains": n_domains, "n_allow": n_allow, "n_deny": n_deny},
+        "exceptions": {"n_domains": n_domains, "n_allow": n_allow, "n_deny": n_deny,
+                       "n_disabled": n_disabled},
         "counts": {"clients": n_clients, "profiles": n_profiles},
         "collector": collector,
-        "drift": drift_info(top_keys),
+        "drift": drift_info(top_keys, stats_keys),
     })
     return base, series
 

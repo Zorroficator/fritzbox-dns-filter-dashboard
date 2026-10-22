@@ -18,7 +18,7 @@ const I18N = {
     pct_note: "Anteil mit einer Nachkommastelle; die FRITZ!Box-Oberfläche rundet auf ganze Prozent auf.",
     exceptions_note: "Nur die Anzahl wird erfasst, keine Inhalte. Die Box liefert keine Top-Domains und keine Top-Clients.",
     footer: "FTrap", footer_info: "Keine Top-Domains/-Clients: nicht von der Box geliefert.",
-    footer_beta: "FRITZ!OS-Beta-Schnittstelle (getestet: 8.40 Labor, Build 136730) – kann sich mit jedem Update ändern",
+    footer_beta: "FRITZ!OS-Beta-Schnittstelle (getestet: 8.50, Build 136731) – kann sich mit jedem Update ändern",
     t_req_today: "Anfragen heute", t_blk_today: "Blockiert heute", t_pct_today: "Anteil blockiert heute",
     t_restart: "Seit Box-Neustart", t_entries: "Einträge in Filterlisten", t_filter: "Filter",
     t_filter_sub_on: "DNS-Filter aktiv", t_filter_sub_off: "DNS-Filter ausgeschaltet",
@@ -34,11 +34,16 @@ const I18N = {
     st_ok: "in Ordnung", w_status: "Aktualisierung fehlgeschlagen", w_stale: "Aktualisierung überfällig",
     w_not_ready: "Liste nicht bereit", never: "nie",
     ago_min: "vor {n} Min.", ago_h: "vor {n} Std.", ago_d: "vor {n} Tagen", ago_now: "gerade eben",
-    ex_domains: "Ausnahmen (Domains)", ex_allow: "davon erlaubt", ex_deny: "davon gesperrt",
+    ex_domains: "Ausnahmen (Domains)", ex_allow: "davon erlaubt", ex_deny: "davon gesperrt", ex_disabled: "deaktiviert",
     sec_autoupdate: "Automatische Aktualisierung", au_status: "Status", au_interval: "Intervall",
     au_last_auto: "Letzte automatische", au_last_manual: "Letzte manuelle",
     au_every_8h: "alle 8 Stunden", au_daily: "täglich", au_weekly: "wöchentlich", au_monthly: "monatlich",
     au_every_n_h: "alle {n} Std.", au_note: "Nur Anzeige: Die Aktualisierung der Filterlisten läuft in der FRITZ!Box.",
+    sec_listupd: "Filterlisten-Aktualisierung", lu_interval: "Intervall",
+    lu_24h: "Läufe 24 Std.", lu_7d: "Läufe 7 Tage", lu_30d: "Läufe 30 Tage",
+    lu_counts: "{a} automatisch · {m} manuell", lu_recent: "Letzte Läufe",
+    lu_auto: "automatisch", lu_manual: "manuell", lu_none: "Noch kein Lauf beobachtet.",
+    lu_next: "Nächster Lauf erwartet: {t}", lu_since: "Gezählt seit {t}",
     b_filter_off: "Der DNS-Filter der FRITZ!Box ist ausgeschaltet.",
     b_stale: "Sammler-Daten veraltet: letzter Stand vor {age}.",
     b_stale_err: "Letzte Fehlernotiz: {note} ({when}).",
@@ -57,7 +62,7 @@ const I18N = {
     pct_note: "Share with one decimal; the FRITZ!Box UI rounds up to whole percent.",
     exceptions_note: "Only the count is collected, not the contents. The box provides no top domains or top clients.",
     footer: "FTrap", footer_info: "No top domains/clients: not provided by the box.",
-    footer_beta: "FRITZ!OS beta API (tested: 8.40 Labor, build 136730) – may change with any update",
+    footer_beta: "FRITZ!OS beta API (tested: 8.50, build 136731) – may change with any update",
     t_req_today: "Requests today", t_blk_today: "Blocked today", t_pct_today: "Share blocked today",
     t_restart: "Since box restart", t_entries: "Entries in filter lists", t_filter: "Filter",
     t_filter_sub_on: "DNS filter active", t_filter_sub_off: "DNS filter switched off",
@@ -73,11 +78,16 @@ const I18N = {
     st_ok: "OK", w_status: "update failed", w_stale: "update overdue",
     w_not_ready: "list not ready", never: "never",
     ago_min: "{n} min ago", ago_h: "{n} h ago", ago_d: "{n} days ago", ago_now: "just now",
-    ex_domains: "Exceptions (domains)", ex_allow: "of which allowed", ex_deny: "of which blocked",
+    ex_domains: "Exceptions (domains)", ex_allow: "of which allowed", ex_deny: "of which blocked", ex_disabled: "disabled",
     sec_autoupdate: "Automatic update", au_status: "Status", au_interval: "Interval",
     au_last_auto: "Last automatic", au_last_manual: "Last manual",
     au_every_8h: "every 8 hours", au_daily: "daily", au_weekly: "weekly", au_monthly: "monthly",
     au_every_n_h: "every {n} h", au_note: "Display only: the filter lists are updated by the FRITZ!Box itself.",
+    sec_listupd: "Filter list updates", lu_interval: "Interval",
+    lu_24h: "Runs 24 h", lu_7d: "Runs 7 days", lu_30d: "Runs 30 days",
+    lu_counts: "{a} automatic · {m} manual", lu_recent: "Latest runs",
+    lu_auto: "automatic", lu_manual: "manual", lu_none: "No run observed yet.",
+    lu_next: "Next run expected: {t}", lu_since: "Counted since {t}",
     b_filter_off: "The FRITZ!Box DNS filter is switched off.",
     b_stale: "Collector data stale: last snapshot {age} ago.",
     b_stale_err: "Last error note: {note} ({when}).",
@@ -295,9 +305,10 @@ function renderBanners(d, nowSec) {
   });
   (d.notes || []).forEach((n) => add("warn", t("b_table", { n })));
   if (d.drift) {
-    add("info", t("b_drift", {
-      m: (d.drift.missing || []).join(", ") || "–", a: (d.drift.added || []).join(", ") || "–",
-    }));
+    const sp = (k) => "statistics." + k;
+    const miss = (d.drift.missing || []).concat((d.drift.stats_missing || []).map(sp));
+    const added = (d.drift.added || []).concat((d.drift.stats_added || []).map(sp));
+    add("info", t("b_drift", { m: miss.join(", ") || "–", a: added.join(", ") || "–" }));
   }
   document.getElementById("banners").replaceChildren(...out);
 }
@@ -372,6 +383,7 @@ function renderExceptions(d) {
     metric(t("ex_domains"), num(ex.n_domains)),
     metric(t("ex_allow"), num(ex.n_allow)),
     metric(t("ex_deny"), num(ex.n_deny)),
+    metric(t("ex_disabled"), num(ex.n_disabled)),
   ] : []);
 }
 
@@ -398,6 +410,38 @@ function renderAutoUpdate(d) {
   fill("autoupdate-grid", tiles);
 }
 
+function renderListUpdates(d) {
+  const sec = document.getElementById("sec-listupd");
+  const lu = d.list_updates;
+  sec.classList.toggle("hidden-sec", !d.available || !lu || !lu.available);
+  if (!d.available || !lu || !lu.available) { fill("listupd-grid", []); fill("listupd-recent", []); return; }
+  const c = lu.counts || {};
+  const cnt = (k, label) => {
+    const x = c[k] || {};
+    return metric(label, num((x.auto || 0) + (x.manual || 0)),
+      t("lu_counts", { a: num(x.auto || 0), m: num(x.manual || 0) }));
+  };
+  fill("listupd-grid", [
+    metric(t("lu_interval"), fmtInterval({ enabled: lu.auto_enabled, interval_s: lu.interval_s }), null, "small"),
+    cnt("24h", t("lu_24h")), cnt("7d", t("lu_7d")), cnt("30d", t("lu_30d")),
+  ]);
+  const rec = lu.recent || [];
+  const ul = h("ul", "listupd-list");
+  if (!rec.length) ul.appendChild(h("li", null, t("lu_none")));
+  rec.forEach((r) => {
+    const li = h("li");
+    li.appendChild(h("span", "lu-time", fmtDateTime(r.ts)));
+    li.appendChild(h("span", "badge " + (r.kind === "manual" ? "mut" : "ok"), t(r.kind === "manual" ? "lu_manual" : "lu_auto")));
+    ul.appendChild(li);
+  });
+  const notes = [];
+  if (lu.next_expected_ts) notes.push(t("lu_next", { t: fmtDateTime(lu.next_expected_ts) }));
+  if (lu.observed_since) notes.push(t("lu_since", { t: fmtDateTime(lu.observed_since) }));
+  const nodes = [h("div", "metric-label", t("lu_recent")), ul];
+  notes.forEach((n) => nodes.push(h("p", "card-note after", n)));
+  fill("listupd-recent", nodes);
+}
+
 function renderChart() {
   const s = seriesStore[curSpan];
   document.getElementById("chart-title").textContent = t("title_" + curSpan);
@@ -414,6 +458,7 @@ function render(d) {
   renderBanners(d, nowSec);
   renderTiles(d);
   renderLists(d, nowSec);
+  renderListUpdates(d);
   renderAutoUpdate(d);
   renderExceptions(d);
   renderChart();
@@ -431,7 +476,7 @@ function shiftTimes(o, delta) {
   if (!o || typeof o !== "object") return;
   for (const k of Object.keys(o)) {
     const v = o[k];
-    if ((k === "ts" || k.endsWith("_ts")) && isNum(v)) o[k] = v + delta;
+    if ((k === "ts" || k === "observed_since" || k.endsWith("_ts")) && isNum(v)) o[k] = v + delta;
     else if (v && typeof v === "object") shiftTimes(v, delta);
   }
 }

@@ -7,7 +7,7 @@
 Pi-hole-style statistics for the built-in DNS filter of FRITZ!OS 8.4x/8.50: a small collector, a SQLite database and a static web dashboard. All requests to the box are read-only.
 
 > [!WARNING]
-> **Beta API.** The DNS filter is available from FRITZ!OS 8.50 (final since 29 Sep 2026, initially for the 7690/5690/5630, more models to follow) and in lab releases of 8.4x. This project was developed and tested with **FRITZ!OS 8.40 Labor, build 136730**. Third-party projects report the same path (`/api/v0/beta/dnsfilter`) on 8.50 as well; that was not tested here. The API stays undocumented beta and may change or disappear with any firmware update. Treat this project as experimental and use it with caution.
+> **Beta API.** The DNS filter is available from FRITZ!OS 8.50 (final since 29 Sep 2026, initially for the 7690/5690/5630, more models to follow) and in lab releases of 8.4x. This project was developed with FRITZ!OS 8.40 lab (build 136730) and is tested with **FRITZ!OS 8.50 (build 136731)**, where the same path (`/api/v0/beta/dnsfilter`) works. The API stays undocumented beta and may change or disappear with any firmware update. Treat this project as experimental and use it with caution.
 
 **🔴 [Live demo dashboard](https://zorroficator.github.io/fritzbox-dns-filter-dashboard/)** – static page with synthetic data.
 
@@ -94,15 +94,20 @@ With the credentials variables set, `--config` may be omitted.
 - `enabled` – filter switched on or off
 - `statistics.dnsQueryCount.blocked` / `.total` – counters **since the last box restart**
 - `filterlists[]` – per list `status` and `latestUpdate`
-- `automaticUpdate`, `manualUpdate` – on/off, interval and last update times; the dashboard shows them (display only, FTrap does not change them)
+- `automaticUpdate`, `manualUpdate` – on/off, interval and last update times; the dashboard shows them (display only, FTrap does not change them). On the tested box `manualUpdate.lastTimestamp` stays 0 even after a manual update, so manual runs are taken from `latestUpdate` of the lists instead (see below)
 - `clients`, `domains`, `profiles` – configuration lists (exceptions, profiles); only the number of entries is stored
-- `domains[].action` (`allow` / `deny`) – used only to count allow and deny exceptions separately; entries with `enabled: false` are counted too, unknown actions count only in the total
+- `domains[].action` (`allow` / `deny`) and `domains[].enabled` – used only to count allow, deny and disabled exceptions separately; disabled entries are still counted as allow/deny, unknown actions count only in the total, a missing or null `enabled` does not count as disabled
+- `statistics` – only the **field names** are stored (`stats_keys`, never values). If the box adds or drops statistics fields, the dashboard shows a structure-change notice
+
+### Filter list updates
+
+The dashboard card "Filter list updates" shows automatic and manual runs, the counts for 24 h / 7 days / 30 days and the next expected automatic run. Because the box does not fill `manualUpdate.lastTimestamp`, the collector records every distinct `latestUpdate.timestamp` per list in the table `dnsfilter_list_updates` (`uid`, `latest_ts`, `latest_cause`, `latest_status`, `last_success_ts`, `first_seen_ts`). Runs with cause `manual` form the manual history. This history is kept for a fixed **90 days**, independent of `retention_days`; the newest row per list always stays.
 
 ## Findings and limits
 
 - The box delivers **no values per domain or per device**, so there are no top lists. Probed sub-paths such as `/statistics`, `/top` and `/log` answer HTTP 400.
 - Blocked domains are answered with `0.0.0.0`.
-- This is a beta API: the path may change. The box also answers unknown paths with HTTP 400 "permission denied", so a wrong path looks like a permission problem. Alternative paths can be listed in `paths` of the config; they are tried in order, the first success wins.
+- This is a beta API: the path may change. The box also answers unknown paths with HTTP 400 "permission denied", so a wrong path looks like a permission problem. Error codes seen on FRITZ!OS 8.50: **3001** = session ID expired (the collector logs in again once and retries), **3002** = "bad path" (unknown sub-path, no re-login). Alternative paths can be listed in `paths` of the config; they are tried in order, the first success wins.
 - Increments: the counters are totals since box restart. The delta is the difference to the previous snapshot; if a counter drops (restart), the delta is the new value itself, because the counter started at 0. Gaps are not interpolated.
 - The box UI rounds the blocked percentage up to whole percent; FTrap shows one decimal.
 
@@ -135,7 +140,7 @@ python3 demo/make_sample.py              # writes synthetic data to ./data
 python3 demo/make_sample.py --out DIR    # or to another directory
 ```
 
-It generates 30 days of fake counters including one simulated box restart. `ftrap.json` is marked `demo: true`; in this mode the page shifts all timestamps client-side so the static demo never looks stale. The GitHub Pages workflow builds the live demo this way.
+It generates 30 days of fake counters including one simulated box restart, automatic list updates every 8 hours and two manual runs (filling the "Filter list updates" card). `ftrap.json` is marked `demo: true`; in this mode the page shifts all timestamps client-side so the static demo never looks stale. The GitHub Pages workflow builds the live demo this way.
 
 ## Tests
 
