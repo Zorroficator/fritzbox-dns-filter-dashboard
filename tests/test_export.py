@@ -363,11 +363,11 @@ class ListUpdates(unittest.TestCase):
         d = self._build([(n - 300, n - 3600, 0)], n - 3600, enabled=0)
         self.assertIsNone(d["list_updates"]["next_expected_ts"])
 
-    def test_recent_limited_to_10_newest_first(self):
+    def test_recent_limited_to_3_newest_first(self):
         n = self.NOW
         snaps = [(n - 20000 + i * 100, n - 15000 + i * 600, 0) for i in range(15)]
         lu = self._build(snaps, n)["list_updates"]
-        self.assertEqual(len(lu["recent"]), 10)
+        self.assertEqual(len(lu["recent"]), 3)
         self.assertEqual(lu["recent"][0]["ts"], n - 15000 + 14 * 600)
 
     def test_no_not_refreshed_warning(self):

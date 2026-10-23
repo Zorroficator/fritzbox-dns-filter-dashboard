@@ -32,4 +32,4 @@ jobs:
       - name: Smoke test (demo data)
         run: python demo/make_sample.py --out /tmp/demo_out
       - name: JavaScript syntax check
-        run: for f in app.js theme-init.js; do node --check "$f"; done
+        run: for f in app.js dns.js theme-init.js; do node --check "$f"; done

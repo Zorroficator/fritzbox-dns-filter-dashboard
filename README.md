@@ -6,7 +6,7 @@
 
 [![Tests](https://github.com/Zorroficator/fritzbox-dns-filter-dashboard/actions/workflows/tests.yml/badge.svg)](https://github.com/Zorroficator/fritzbox-dns-filter-dashboard/actions/workflows/tests.yml)
 
-Pi-hole-style statistics for the built-in DNS filter of FRITZ!OS 8.4x/8.50: a small collector, a SQLite database and a static web dashboard. All requests to the box are read-only.
+Pi-hole-style statistics for the built-in DNS filter of FRITZ!OS 8.4x/8.50: a small collector, a SQLite database and a static web dashboard. The dashboard and its collector stay read-only towards the box. An optional companion collector adds a per-query DNS log (see [Optional: DNS query log](#optional-dns-query-log)); that companion starts a packet capture on the box, the dashboard itself does not.
 
 > [!WARNING]
 > **Beta API.** The DNS filter is available from FRITZ!OS 8.50 (final since 29 Sep 2026, initially for the 7690/5690/5630, more models to follow) and in lab releases of 8.4x. This project was developed with FRITZ!OS 8.40 lab (build 136730) and is tested with **FRITZ!OS 8.50 (build 136731)**, where the same path (`/api/v0/beta/dnsfilter`) works. The API stays undocumented beta and may change or disappear with any firmware update. Treat this project as experimental and use it with caution.
@@ -17,7 +17,7 @@ Pi-hole-style statistics for the built-in DNS filter of FRITZ!OS 8.4x/8.50: a sm
 
 ## Related projects
 
-- **[FritzHole](https://github.com/Milinator/fritzhole-ha)** – Home Assistant app for the same DNS filter. It reads every single DNS query via the box's packet capture (per device and per domain) and can also manage the filter (allow/block lists, pause, filter lists). Choose FritzHole if you run Home Assistant and want per-query detail or filter management; choose FTrap if you want a small standalone, strictly read-only tool that does not occupy the packet capture.
+- **[FritzHole](https://github.com/Milinator/fritzhole-ha)** – Home Assistant app for the same DNS filter. It reads every single DNS query via the box's packet capture (per device and per domain) and can also manage the filter (allow/block lists, pause, filter lists). Choose FritzHole if you run Home Assistant and want per-query detail or filter management; choose FTrap if you want a small standalone dashboard that is read-only towards the box and does not need the packet capture. Its optional DNS section can show per-query data too, but only through a separate companion collector that does occupy the box's packet capture.
 
 ## Architecture
 
@@ -69,14 +69,28 @@ Serve **only the web files** – never the repository folder itself, otherwise `
 ```sh
 WEB=~/ftrap-web
 mkdir -p "$WEB/data"
-cp index.html app.js theme-init.js style.css fonts.css "$WEB/" && cp -r fonts "$WEB/"
+cp index.html app.js dns.js theme-init.js style.css fonts.css "$WEB/" && cp -r fonts "$WEB/"
 python3 export.py --out "$WEB/data"        # schedule this, e.g. every 5 minutes
 
 # local look only:
 python3 -m http.server 8080 --bind 127.0.0.1 --directory "$WEB"    # http://localhost:8080/
 ```
 
-Served files: `index.html`, `app.js`, `theme-init.js`, `style.css`, `fonts.css`, `fonts/`, `data/*.json`. If you start `http.server` inside the repository folder instead, `.git/` and the collector configuration are served as well.
+Served files: `index.html`, `app.js`, `dns.js`, `theme-init.js`, `style.css`, `fonts.css`, `fonts/`, `data/*.json`. If you start `http.server` inside the repository folder instead, `.git/` and the collector configuration are served as well.
+
+## Optional: DNS query log
+
+The box itself provides no values per domain or per device, so the core dashboard shows counters only. For top domains, top devices and a live query log the dashboard has an optional DNS section (`dns.js`, the `#dns` block in `index.html`). It stays **hidden** until `data/dns_top.json` or `data/dns_live.json` can be loaded; without these files nothing changes.
+
+The files are written by a separate companion project, the DNS capture collector: [fritzbox-dns-capture-collector](https://github.com/Zorroficator/fritzbox-dns-capture-collector). It reads the DNS traffic from the box's packet capture, which is a different mechanism with different consequences than the rest of FTrap:
+
+- it occupies the box's packet capture (manual captures in the box UI are blocked meanwhile),
+- it needs its own FRITZ!Box user with the right "FRITZ!Box Settings", which in practice is an admin right (see Requirements above).
+
+Let the companion write into the same `data/` directory that the dashboard serves (its `out_dir`), or copy the two files there. The collector creates its files with mode 600 / 700 by default; if the web server runs as a different user it gets "403 Forbidden". Run both as the same user, or set `file_mode = 0o640` / `dir_mode = 0o750` plus a shared group in the collector's `[output]` section, or copy only `dns_*.json` (see "Web server as another user" in the collector's README). The JSON format is described in [`docs/dns_contract.md`](docs/dns_contract.md) (a copy of the contract maintained in the companion repository); `python3 demo/make_sample.py` writes matching sample files with fictional devices and domains, and a test checks them against that document.
+
+> [!WARNING]
+> **Privacy.** The DNS log shows which device asked for which domain and when, for **all devices of the household**: it is the browsing behaviour of everyone who lives in or visits your network. Inform housemates and guests. Keep the files inside your LAN and never serve them from a public web server. The dashboard has no login, so restrict access to `data/dns_*.json` yourself (file permissions, authentication in your reverse proxy) and keep the retention short.
 
 ## Environment variables
 
@@ -142,7 +156,7 @@ python3 demo/make_sample.py              # writes synthetic data to ./data
 python3 demo/make_sample.py --out DIR    # or to another directory
 ```
 
-It generates 30 days of fake counters including one simulated box restart, automatic list updates every 8 hours and two manual runs (filling the "Filter list updates" card). `ftrap.json` is marked `demo: true`; in this mode the page shifts all timestamps client-side so the static demo never looks stale. The GitHub Pages workflow builds the live demo this way.
+It generates 30 days of fake counters including one simulated box restart, automatic list updates every 8 hours and two manual runs (filling the "Filter list updates" card). `ftrap.json` is marked `demo: true`; in this mode the page shifts all timestamps client-side so the static demo never looks stale. It also writes `dns_top.json` and `dns_live.json` with eight fictional devices and fictional domains (`example.*`, `*.invalid`), so the demo shows the optional DNS section. The GitHub Pages workflow builds the live demo this way.
 
 ## Tests
 

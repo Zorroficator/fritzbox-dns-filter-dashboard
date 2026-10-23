@@ -60,7 +60,7 @@ STALE_COLLECTOR_S = 900            # collector data older than this -> warning
 DEFAULT_LIST_MAX_AGE_S = 48 * 3600  # used when the interval is missing
 MANUAL_GROUP_S = 900               # manual-run timestamps closer than this are one run
 RUN_WINDOWS = (("24h", 86400), ("7d", 7 * 86400), ("30d", 30 * 86400))
-RECENT_RUNS = 10
+RECENT_RUNS = 3
 EXPECTED_TOP_KEYS = frozenset([
     "automaticUpdate", "clients", "domains", "enabled",
     "filterlists", "manualUpdate", "profiles", "statistics",

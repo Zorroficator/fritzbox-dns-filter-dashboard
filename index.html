@@ -85,6 +85,66 @@
       <p class="card-note after" data-i18n="exceptions_note">Only the count is collected, not the contents. The box provides no top domains or top clients.</p>
     </section>
 
+    <section class="dns-wrap" id="dns" hidden>
+      <div class="dns-filterbar">
+        <div class="seg-group" role="group" data-dns-aria="a_period" aria-label="Time range" id="dns-period">
+          <button class="toggle-btn" type="button" data-dns-period="today" data-dns-i18n="p_today">Today</button>
+          <button class="toggle-btn" type="button" data-dns-period="7d" data-dns-i18n="p_7d">7 days</button>
+          <button class="toggle-btn" type="button" data-dns-period="30d" data-dns-i18n="p_30d">30 days</button>
+        </div>
+        <span class="card-note" id="dns-health"></span>
+      </div>
+      <p class="banner warn" id="dns-stale" hidden data-dns-i18n="stale">Capture data outdated</p>
+      <div class="card" id="dns-c-tiles">
+        <h2 data-dns-i18n="dns_title">DNS analysis</h2>
+        <div class="metric-grid cols-4" id="dns-tiles"></div>
+      </div>
+      <div class="card" id="dns-c-series">
+        <h2 id="dns-h-series">Queries in the last 24 hours</h2>
+        <p class="card-note dns-sub" id="dns-s-series"></p>
+        <svg class="chart dns-chart" id="dns-svg-series" role="img"></svg>
+        <div class="legend" id="dns-leg-series"></div>
+      </div>
+      <div class="card" id="dns-c-clients">
+        <h2 id="dns-h-clients">Device activity, 24 hours</h2>
+        <p class="card-note dns-sub" id="dns-s-clients"></p>
+        <div class="dns-spark" id="dns-spark"></div>
+      </div>
+      <div class="card" id="dns-c-share">
+        <h2 data-dns-i18n="h_share">Query types and reply status</h2>
+        <div class="dns-donuts">
+          <div class="dns-share" id="dns-d-qtypes"><h3 id="dns-h-qtypes">Query types</h3><p class="card-note dns-sub" id="dns-s-qtypes"></p><svg class="sharebar" role="img"></svg><ul class="dns-legend"></ul></div>
+          <div class="dns-share" id="dns-d-status"><h3 id="dns-h-status">Reply status</h3><p class="card-note dns-sub" id="dns-s-status"></p><svg class="sharebar" role="img"></svg><ul class="dns-legend"></ul></div>
+        </div>
+      </div>
+      <div class="card" id="dns-c-tables">
+        <h2 data-dns-i18n="h_tables">Top lists</h2>
+        <div class="dns-grid">
+          <div class="dns-list" id="dns-t-permitted"><h3 data-dns-i18n="l_permitted">Top permitted domains</h3><div class="table-wrap"><table class="grid dns-top"></table></div></div>
+          <div class="dns-list" id="dns-t-blocked"><h3 data-dns-i18n="l_blocked">Top blocked domains</h3><div class="table-wrap"><table class="grid dns-top"></table></div></div>
+          <div class="dns-list" id="dns-t-clients"><h3 data-dns-i18n="l_clients_all">Top devices (all)</h3><div class="table-wrap"><table class="grid dns-top"></table></div></div>
+          <div class="dns-list" id="dns-t-clients-blocked"><h3 data-dns-i18n="l_clients_blocked">Top devices (blocked only)</h3><div class="table-wrap"><table class="grid dns-top"></table></div></div>
+        </div>
+      </div>
+      <details class="card dns-logcard" id="dns-c-log">
+        <summary>
+          <h2 data-dns-i18n="log_title">Query log</h2>
+          <span class="dns-sum-meta" id="dns-log-meta"></span>
+        </summary>
+        <div class="dns-tools">
+          <input type="search" id="dns-search" class="dns-input" placeholder="Search domain / device" autocomplete="off">
+          <select id="dns-filter" class="dns-input" data-dns-aria="a_status" aria-label="Status"></select>
+          <select id="dns-limit" class="dns-input" data-dns-aria="a_rows" aria-label="Number of rows"></select>
+          <button class="toggle-btn btn-plain" type="button" id="dns-pause" data-dns-i18n="pause">Pause</button>
+        </div>
+        <div class="table-wrap"><table class="grid dns-log" id="dns-log"><thead><tr>
+          <th data-dns-i18n="c_time">Time</th><th data-dns-i18n="c_type">Type</th><th data-dns-i18n="c_domain">Domain</th>
+          <th data-dns-i18n="c_device">Device</th><th data-dns-i18n="c_status">Status</th>
+          <th data-dns-i18n="c_reply">Reply</th><th class="num" data-dns-i18n="c_ms">Time (ms)</th>
+        </tr></thead><tbody></tbody></table></div>
+      </details>
+    </section>
+
   </main>
 
   <footer class="site-footer">
@@ -100,5 +160,6 @@
   <div id="tooltip" class="hidden"></div>
 
   <script src="app.js"></script>
+  <script src="dns.js"></script>
 </body>
 </html>

@@ -6,7 +6,7 @@
 
 [![Tests](https://github.com/Zorroficator/fritzbox-dns-filter-dashboard/actions/workflows/tests.yml/badge.svg)](https://github.com/Zorroficator/fritzbox-dns-filter-dashboard/actions/workflows/tests.yml)
 
-Pi-hole-artige Statistik für den eingebauten DNS-Filter von FRITZ!OS 8.4x/8.50: ein kleiner Sammler, eine SQLite-Datenbank und ein statisches Web-Dashboard. Alle Abfragen an die Box sind rein lesend.
+Pi-hole-artige Statistik für den eingebauten DNS-Filter von FRITZ!OS 8.4x/8.50: ein kleiner Sammler, eine SQLite-Datenbank und ein statisches Web-Dashboard. Das Dashboard und sein Sammler arbeiten gegenüber der Box rein lesend. Ein optionaler Begleit-Sammler ergänzt ein Protokoll der einzelnen DNS-Anfragen (siehe [Optional: DNS-Abfrageprotokoll](#optional-dns-abfrageprotokoll)); dieser Begleiter startet einen Paketmitschnitt an der Box, das Dashboard selbst nicht.
 
 > [!WARNING]
 > **Beta-Schnittstelle.** Den DNS-Filter gibt es ab FRITZ!OS 8.50 (final seit 29.09.2026, zunächst für 7690/5690/5630, weitere Modelle folgen) sowie in Labor-Versionen von 8.4x. Entwickelt wurde mit FRITZ!OS 8.40 Labor (Build 136730), getestet ist mit **FRITZ!OS 8.50 (Build 136731)**; dort funktioniert derselbe Pfad (`/api/v0/beta/dnsfilter`). Die Schnittstelle bleibt undokumentierte Beta und kann sich mit jedem Firmware-Update ändern oder wegfallen. Das Projekt ist daher experimentell – mit Vorsicht zu genießen.
@@ -17,7 +17,7 @@ Pi-hole-artige Statistik für den eingebauten DNS-Filter von FRITZ!OS 8.4x/8.50:
 
 ## Verwandte Projekte
 
-- **[FritzHole](https://github.com/Milinator/fritzhole-ha)** – Home-Assistant-App für denselben DNS-Filter. Sie liest über den Paketmitschnitt der Box jede einzelne DNS-Anfrage mit (pro Gerät und Domain) und kann den Filter auch verwalten (Allow-/Blocklist, Pause, Filterlisten). FritzHole passt, wenn du Home Assistant nutzt und Einzelanfragen oder die Filterverwaltung brauchst; FTrap, wenn du ein kleines eigenständiges, rein lesendes Werkzeug willst, das den Paketmitschnitt nicht belegt.
+- **[FritzHole](https://github.com/Milinator/fritzhole-ha)** – Home-Assistant-App für denselben DNS-Filter. Sie liest über den Paketmitschnitt der Box jede einzelne DNS-Anfrage mit (pro Gerät und Domain) und kann den Filter auch verwalten (Allow-/Blocklist, Pause, Filterlisten). FritzHole passt, wenn du Home Assistant nutzt und Einzelanfragen oder die Filterverwaltung brauchst; FTrap, wenn du ein kleines eigenständiges Dashboard willst, das gegenüber der Box rein lesend arbeitet und den Paketmitschnitt nicht braucht. Der optionale DNS-Abschnitt kann ebenfalls Einzelabfragen zeigen, aber nur über einen separaten Begleit-Sammler, der den Paketmitschnitt der Box belegt.
 
 ## Architektur
 
@@ -69,14 +69,28 @@ Liefere **nur die Webdateien** aus – nie den Repository-Ordner selbst, sonst w
 ```sh
 WEB=~/ftrap-web
 mkdir -p "$WEB/data"
-cp index.html app.js theme-init.js style.css fonts.css "$WEB/" && cp -r fonts "$WEB/"
+cp index.html app.js dns.js theme-init.js style.css fonts.css "$WEB/" && cp -r fonts "$WEB/"
 python3 export.py --out "$WEB/data"        # regelmäßig planen, z. B. alle 5 Minuten
 
 # nur für einen lokalen Blick:
 python3 -m http.server 8080 --bind 127.0.0.1 --directory "$WEB"    # http://localhost:8080/
 ```
 
-Ausgelieferte Dateien: `index.html`, `app.js`, `theme-init.js`, `style.css`, `fonts.css`, `fonts/`, `data/*.json`. Startest du `http.server` stattdessen im Repository-Ordner, werden auch `.git/` und die Sammler-Konfiguration ausgeliefert.
+Ausgelieferte Dateien: `index.html`, `app.js`, `dns.js`, `theme-init.js`, `style.css`, `fonts.css`, `fonts/`, `data/*.json`. Startest du `http.server` stattdessen im Repository-Ordner, werden auch `.git/` und die Sammler-Konfiguration ausgeliefert.
+
+## Optional: DNS-Abfrageprotokoll
+
+Die Box liefert keine Werte pro Domain oder Gerät, deshalb zeigt das Kern-Dashboard nur Zähler. Für Top-Domains, Top-Geräte und ein Live-Abfrageprotokoll gibt es im Dashboard einen optionalen DNS-Abschnitt (`dns.js`, der Block `#dns` in `index.html`). Er bleibt **verborgen**, bis `data/dns_top.json` oder `data/dns_live.json` geladen werden kann; ohne diese Dateien ändert sich nichts.
+
+Die Dateien schreibt ein separates Begleitprojekt, der DNS-Mitschnitt-Sammler: [fritzbox-dns-capture-collector](https://github.com/Zorroficator/fritzbox-dns-capture-collector). Er liest den DNS-Verkehr aus dem Paketmitschnitt der Box – ein anderer Mechanismus mit anderen Folgen als der Rest von FTrap:
+
+- er belegt den Paketmitschnitt der Box (manuelle Mitschnitte in der Box-Oberfläche sind währenddessen gesperrt),
+- er braucht einen eigenen FRITZ!Box-Benutzer mit dem Recht „FRITZ!Box Einstellungen“, praktisch also ein Admin-Recht (siehe Voraussetzungen oben).
+
+Lass den Begleiter in dasselbe `data/`-Verzeichnis schreiben, das auch das Dashboard ausliefert (sein `out_dir`), oder kopiere die beiden Dateien dorthin. Der Sammler legt seine Dateien standardmäßig mit Modus 600 / 700 an; läuft der Webserver unter einem anderen Benutzer, meldet er „403 Forbidden“. Betreibe beide unter demselben Benutzer, setze im Abschnitt `[output]` des Sammlers `file_mode = 0o640` / `dir_mode = 0o750` plus eine gemeinsame Gruppe, oder kopiere nur `dns_*.json` (siehe „Webserver unter anderem Benutzer“ im README des Sammlers). Das JSON-Format steht in [`docs/dns_contract.md`](docs/dns_contract.md) (Kopie des Vertrags aus dem Begleit-Repository, englisch); `python3 demo/make_sample.py` schreibt passende Beispieldateien mit erfundenen Geräten und Domains, ein Test prüft sie gegen dieses Dokument.
+
+> [!WARNING]
+> **Datenschutz.** Das DNS-Protokoll zeigt, welches Gerät wann welche Domain angefragt hat – für **alle Geräte des Haushalts**. Es ist das Surfverhalten aller, die in deinem Netz wohnen oder zu Besuch sind. Informiere Mitbewohner und Gäste. Halte die Dateien im lokalen Netz und liefere sie nie über einen öffentlichen Webserver aus. Das Dashboard hat keine Anmeldung, schütze `data/dns_*.json` daher selbst (Dateirechte, Authentifizierung im Reverse-Proxy) und halte die Aufbewahrung kurz.
 
 ## Umgebungsvariablen
 
@@ -142,7 +156,7 @@ python3 demo/make_sample.py              # schreibt synthetische Daten nach ./da
 python3 demo/make_sample.py --out DIR    # oder in ein anderes Verzeichnis
 ```
 
-Erzeugt 30 Tage erfundener Zähler inklusive eines simulierten Box-Neustarts, automatischer Listen-Aktualisierungen alle 8 Stunden und zwei manueller Läufe (füllt die Karte „Filterlisten-Aktualisierung“). `ftrap.json` ist mit `demo: true` markiert; in diesem Modus verschiebt die Seite alle Zeitstempel im Browser, damit die statische Demo nie veraltet wirkt. Der GitHub-Pages-Workflow baut die Live-Demo so.
+Erzeugt 30 Tage erfundener Zähler inklusive eines simulierten Box-Neustarts, automatischer Listen-Aktualisierungen alle 8 Stunden und zwei manueller Läufe (füllt die Karte „Filterlisten-Aktualisierung“). `ftrap.json` ist mit `demo: true` markiert; in diesem Modus verschiebt die Seite alle Zeitstempel im Browser, damit die statische Demo nie veraltet wirkt. Außerdem entstehen `dns_top.json` und `dns_live.json` mit acht erfundenen Geräten und erfundenen Domains (`example.*`, `*.invalid`), sodass die Demo den optionalen DNS-Abschnitt zeigt. Der GitHub-Pages-Workflow baut die Live-Demo so.
 
 ## Tests
 
